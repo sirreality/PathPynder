@@ -271,20 +271,6 @@ def get_description(input_data=None, block=None, html=None, url=None, id=None, t
     return description
 
 
-@also_known_as('name')
-def get_name(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
-    block, html, url, id, type = process_input(input_data, block, html, url, id, type)
-
-    monster_link = block.find(lambda tag: tag.name == 'a' and
-                                          tag.has_attr('href') and
-                                          tag['href'].startswith('Monsters.aspx?ID=') and
-                                          tag.parent.name == 'h1' and
-                                          tag.parent.get('class') == ['title'] and
-                                          not tag['href'].endswith('=True'))
-    monster_name = monster_link.text
-    return monster_name
-
-
 @also_known_as('recall')
 def get_recall(input_data=None, block: object = None, html: str = None, url: str = None, id: int = None, type: str = 'creature') -> dict:
     """
@@ -329,6 +315,30 @@ def get_recall(input_data=None, block: object = None, html: str = None, url: str
     return recalldict
 
 
+@also_known_as('name')
+def get_name(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
+    block, html, url, id, type = process_input(input_data, block, html, url, id, type)
+
+    monster_link = block.find(lambda tag: tag.name == 'a' and
+                                          tag.has_attr('href') and
+                                          tag['href'].startswith('Monsters.aspx?ID=') and
+                                          tag.parent.name == 'h1' and
+                                          tag.parent.get('class') == ['title'] and
+                                          not tag['href'].endswith('=True'))
+    monster_name = monster_link.text
+    return monster_name
+
+
+@also_known_as('level', 'lvl')
+def get_level(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
+    block, html, url, id, type = process_input(input_data, block, html, url, id, type)
+    tag = block.find('span', {'style': 'margin-left:auto; margin-right:0'})
+    text = tag.text
+    levelstr = text.split()[-1]
+    levelint = int(levelstr)
+    return levelint
+
+
 @also_known_as('rarity')
 def get_rarity(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
     block, html, url, id, type = process_input(input_data, block, html, url, id, type)
@@ -351,15 +361,34 @@ def get_traits(input_data=None, block=None, html=None, url=None, id=None, type='
     return traitslist
 
 
-# @also_known_as('foo')
-# def get_traits(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
-#     block, html, url, id, type = process_input(input_data, block, html, url, id, type)
-#     foo = None
-#     return foo
-#
-#
-# @also_known_as('foo')
-# def get_traits(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
-#     block, html, url, id, type = process_input(input_data, block, html, url, id, type)
-#     foo = None
-#     return foo
+@also_known_as('blocksplit')
+def split_block(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
+    block, html, url, id, type = process_input(input_data, block, html, url, id, type)
+    # find the first time a trait appears
+    tag_trait = block.find(lambda t:
+                           t.name == 'span' and
+                           t.get('class', [])[0].startswith('trait'))
+    # find the next line break after the trait is given
+    next_line_break = tag_trait.find_next('br')
+    content_after_line_break = []
+    for element in next_line_break.next_siblings:
+        if 'title' in element.get('class', []):  # stop if you get to a title
+            break
+        if isinstance(element, NavigableString):
+            content_after_line_break.append(element)
+        else:
+            content_after_line_break.append(element.prettify())
+    new_html = ''.join(content_after_line_break)
+    html_by_sections = new_html.split(r'<hr>')
+    for html in html_by_sections:
+        #TODO convert each html in list to soup
+        pass
+
+    return foo
+
+
+@also_known_as('foo')
+def get_foo(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
+    block, html, url, id, type = process_input(input_data, block, html, url, id, type)
+    foo = None
+    return foo
