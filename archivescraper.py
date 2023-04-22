@@ -1,209 +1,91 @@
+import logging
 import requests
 import re
 from bs4 import *
-
-
-def also_known_as(*names):
-    def decorator(func):
-        def wrapper(*args, **kwargs):
-            return func(*args, **kwargs)
-
-        for name in names:
-            globals()[name] = wrapper
-        return wrapper
-
-    return decorator
 
 
 def remove_tags(html):
     return re.sub('<.*?>', '', html)
 
 
-def assign_input(input_data):
-    """
-    Assign the input_data to the appropriate variable based on its type.
+class ArchivePage:
+    def __init__(self, input_data=None, block=None, html=None, url=None, id=None, type='creature'):
+        self.input_data = input_data
+        self.block = block
+        self.html = html
+        self.url = url
+        self.id = id
+        self.type = type
+        if input_data:
+            self.assign_input()
+        if self.block is None:
+            if self.html:
+                self.set_block()
+            elif self.url:
+                self.set_html()
+                self.set_block()
+            elif self.id:
+                self.set_url()
+                self.set_html()
+                self.set_block()
+            else:
+                logging.error("No information on Archive Page given.")
 
-    :param input_data: Input data, which can be a BeautifulSoup object, a string (URL or HTML), or an integer.
-    :return: A tuple containing the values for (block, html, url, id), where one of them will have the input_data value.
-    """
+    def assign_input(self):
+        # Check if input_data is a BeautifulSoup object
+        if isinstance(self.input_data, BeautifulSoup):
+            self.block = self.input_data
 
-    # Initialize variables
-    block = html = url = id = None
+        # Check if input_data is a string
+        elif isinstance(self.input_data, str):
+            # Check if input_data is a URL (basic check)
+            if 'aonprd.com' in self.input_data:
+                self.url = self.input_data
+            elif '<' in self.input_data:
+                self.html = self.input_data
+            else:
+                print('Input is a string but not a url or html.')
 
-    # Check if input_data is a BeautifulSoup object
-    if isinstance(input_data, BeautifulSoup):
-        block = input_data
+        # Check if input_data is an integer
+        elif isinstance(self.input_data, int):
+            self.id = self.input_data
 
-    # Check if input_data is a string
-    elif isinstance(input_data, str):
-        # Check if input_data is a URL (basic check)
-        if 'aonprd.com' in input_data:
-            url = input_data
-        elif '<' in input_data:
-            html = input_data
         else:
-            print('Input is a string but not a url or html.')
+            print(f"Unknown input type for input_data: {type(self.input_data)}")
 
-    # Check if input_data is an integer
-    elif isinstance(input_data, int):
-        id = input_data
+    def set_url(self):
+        """
+        Generates a URL for an entry in the Pathfinder Second Edition system.
 
-    else:
-        print("Unknown input.")
+        Args:
+        id (int): The ID number of the entry to generate a URL for.
+        type (str): The type of entry, defaults to 'creature'.
 
-    return (block, html, url, id)
+        Returns:
+        str: The URL for the given entry ID and type, or None if no ID is provided.
 
+        """
+        urlfolders = {
+            'creature': 'https://2e.aonprd.com/Monsters.aspx?ID=',
+            'NPC': 'https://2e.aonprd.com/NPCs.aspx?ID='
+        }
 
-def process_input(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
-    """
-    Take any kind of input and return the beautifulsoup object of the stat block of the entry.
+        self.url = urlfolders[self.type] + str(self.id)
 
-    :param input_data: Optional, can be a BeautifulSoup object, a string (URL or HTML), or an integer.
-    :param block: Optional BeautifulSoup object.
-    :param html: Optional HTML string.
-    :param url: Optional URL string.
-    :param id: Optional integer representing the creature ID.
-    :param type: Optional string representing the type of data, default is 'creature'.
-    :return: A tuple containing the processed values for (block, html, url, id, type).
-    """
-    # check if we have to identify the input data
-    if input_data is not None:
-        block, html, url, id = assign_input(input_data)
+    def set_html(self):
+        self.html = requests.get(self.url).text
 
-    # escalate given data to the level of a bs4 object
-    if block is None:
-        if html is None:
-            if url is None:
-                if id is None:
-                    print("No input provided.")
-                url = get_url(id=id, type=type)
-            html = get_html(url=url)
-        block = get_block(html=html)
-    return block, html, url, id, type
+    def set_block(self):
+        soup = BeautifulSoup(self.html, 'html.parser')
+        self.block = soup.select_one('#ctl00_RadDrawer1_Content_MainContent_DetailedOutput')
 
 
-@also_known_as('url')
-def get_url(id=None, type='creature'):
-    """
-    Generates a URL for an entry in the Pathfinder Second Edition system.
-
-    Args:
-    id (int): The ID number of the entry to generate a URL for.
-    type (str): The type of entry, defaults to 'creature'.
-
-    Returns:
-    str: The URL for the given entry ID and type, or None if no ID is provided.
-
-    """
-    monsterurl = 'https://2e.aonprd.com/Monsters.aspx?ID='
-    if id is None:
-        return None
-    if type == 'creature':
-        url = monsterurl + str(id)
-        return url
-
-
-@also_known_as('html')
-def get_html(input_data=None, url=None, id=None, type='creature'):
-    """
-    Retrieve the HTML content from a given URL or creature ID.
-
-    :param input_data: Optional data to be processed, can be a string (URL), or an integer.
-    :param url: Optional URL string.
-    :param id: Optional integer representing the creature ID.
-    :param type: Optional string representing the type of data, default is 'creature'.
-    :return: HTML content as a string.
-    """
-    # check if we have to parse the input data
-    if input_data is not None:
-        block, html, url, id = assign_input(input_data)
-
-    if url is None:
-        url = get_url(id=id, type=type)
-    response = requests.get(url)
-    html = response.text
-    return html
-
-
-@also_known_as('block')
-def get_block(input_data=None, html=None, url=None, id=None, type='creature'):
-    """
-    Get the stat block of the desired html content by providing the HTML, URL, or ID.
-
-    :param html: The HTML content to search for the block. (default: None)
-    :param url: The URL of the web page to fetch and search for the block if no html is provided. (default: None)
-    :param id: The ID used to generate the URL if no URL or HTML is provided. (default: None)
-    :param type: The type of content (e.g., 'creature') to be used when generating the URL. (default: 'creature')
-    :return: The desired HTML block as a BeautifulSoup element.
-    """
-    # check if we have to parse the input data
-    if input_data is not None:
-        block, html, url, id = assign_input(input_data)
-
-    # escalate information to html level
-    if html is None:
-        if url is None:
-            if id is None:
-                print("No input provided.")
-            url = get_url(id=id, type=type)
-        html = get_html(url=url)
-
-    soup = BeautifulSoup(html, 'html.parser')
-    block = soup.select_one('#ctl00_RadDrawer1_Content_MainContent_DetailedOutput')
-    return block
-
-
-class Pathfinder2eMonster:
-    def __init__(self, html=None, id=None, ):
-        self.name = ''
-        self.level = int
-        self.size = str
-        self.type = str
-        self.alignment = str
-        self.stats = {}
-        self.abilities = {}
-        self.actions = []
-        self.skills = {}
-        self.traits = []
-        self.spells = []
-        self.description = ''
-
-        if html is None:
-            if id is not None:
-                html = get_monster_block(id)
-
-        self.interpret_html(self, html)
-
-    def interpret_html(self, html):
-        block = html
-
-    def add_stat(self, stat_name, stat_value):
-        self.stats[stat_name] = stat_value
-
-    def add_ability(self, ability_name, ability_desc):
-        self.abilities[ability_name] = ability_desc
-
-    def add_action(self, action_name, action_desc):
-        self.actions.append((action_name, action_desc))
-
-    def add_skill(self, skill_name, skill_value):
-        self.skills[skill_name] = skill_value
-
-    def add_trait(self, trait_name):
-        self.traits.append(trait_name)
-
-    def add_spell(self, spell_name):
-        self.spells.append(spell_name)
-
-    def set_description(self, description):
-        self.description = description
-
-
-def create_monster_instance(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
+def parse_soup(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
     if block is None:
         block = get_block(input_data, html, url, id, type)
+    data = {}
 
-    pfs = get_pfs(block=block)
+    data[pfs] = get_pfs(block=block)
     namelong = get_name_long(block=block)
     description = get_description(block=block)
     recall = get_recall(block=block)
@@ -237,25 +119,21 @@ def create_monster_instance(input_data=None, block=None, html=None, url=None, id
     offensive_abilities = None
     proactive_abilities = None
 
+    return data
 
-    return Monster(name, level, alignment, size, traits)
 
-
-@also_known_as('pfs')
 def get_pfs(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
     block, html, url, id, type = process_input(input_data, block, html, url, id, type)
     pfs = block.select_one('a[href="PFS.aspx"]').select_one('img').get('alt')
     return pfs
 
 
-@also_known_as('name2', 'namelong')
 def get_name_long(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
     block, html, url, id, type = process_input(input_data, block, html, url, id, type)
     name_long = block.select_one('a[href="PFS.aspx"]').select_one('img').get('alt')
     return name_long
 
 
-@also_known_as('desc', 'get_desc')
 def get_description(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
     block, html, url, id, type = process_input(input_data, block, html, url, id, type)
 
@@ -271,8 +149,7 @@ def get_description(input_data=None, block=None, html=None, url=None, id=None, t
     return description
 
 
-@also_known_as('recall')
-def get_recall(input_data=None, block: object = None, html: str = None, url: str = None, id: int = None, type: str = 'creature') -> dict:
+def get_recall(input_data=None, block = None, html = None, url = None, id = None, type = 'creature') -> dict:
     """
     Retrieves the Recall Knowledge information from a monster's stat block and returns it as a dictionary.
 
@@ -315,7 +192,6 @@ def get_recall(input_data=None, block: object = None, html: str = None, url: str
     return recalldict
 
 
-@also_known_as('name')
 def get_name(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
     block, html, url, id, type = process_input(input_data, block, html, url, id, type)
 
@@ -329,7 +205,6 @@ def get_name(input_data=None, block=None, html=None, url=None, id=None, type='cr
     return monster_name
 
 
-@also_known_as('level', 'lvl')
 def get_level(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
     block, html, url, id, type = process_input(input_data, block, html, url, id, type)
     tag = block.find('span', {'style': 'margin-left:auto; margin-right:0'})
@@ -339,7 +214,6 @@ def get_level(input_data=None, block=None, html=None, url=None, id=None, type='c
     return levelint
 
 
-@also_known_as('rarity')
 def get_rarity(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
     block, html, url, id, type = process_input(input_data, block, html, url, id, type)
     rarity = 'Common'
@@ -348,20 +222,18 @@ def get_rarity(input_data=None, block=None, html=None, url=None, id=None, type='
     return rarity
 
 
-@also_known_as('alignment', 'align')
 def get_alignment(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
     block, html, url, id, type = process_input(input_data, block, html, url, id, type)
     alignment = block.select_one(".traitalignment a").text
     return alignment
 
-@also_known_as('traits')
+
 def get_traits(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
     block, html, url, id, type = process_input(input_data, block, html, url, id, type)
     traitslist = [t.text for t in block.select(".trait a")]
     return traitslist
 
 
-@also_known_as('blocksplit')
 def split_block(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
     block, html, url, id, type = process_input(input_data, block, html, url, id, type)
     # find the first time a trait appears
@@ -387,8 +259,8 @@ def split_block(input_data=None, block=None, html=None, url=None, id=None, type=
     return foo
 
 
-@also_known_as('foo')
 def get_foo(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
     block, html, url, id, type = process_input(input_data, block, html, url, id, type)
     foo = None
     return foo
+
