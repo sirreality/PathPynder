@@ -1,11 +1,13 @@
 import logging
 import requests
+from typing import Optional, List, Dict
 import re
 from bs4 import *
+from bs4 import Tag, NavigableString, PageElement
+
+logging.basicConfig(level=logging.INFO)
 
 
-def remove_tags(html):
-    return re.sub('<.*?>', '', html)
 
 
 class ArchivePage:
@@ -80,187 +82,202 @@ class ArchivePage:
         self.block = soup.select_one('#ctl00_RadDrawer1_Content_MainContent_DetailedOutput')
 
 
-def parse_soup(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
-    if block is None:
-        block = get_block(input_data, html, url, id, type)
-    data = {}
+class ArchivePageParser:
+    def __init__(self, archive_page: ArchivePage):
+        self.page = archive_page
+        self.soup = self.page.block
+        self.data = {}
+        self.process_page()
 
-    data[pfs] = get_pfs(block=block)
-    namelong = get_name_long(block=block)
-    description = get_description(block=block)
-    recall = get_recall(block=block)
-    name = get_name(block=block)
-    level = get_level(block=block)
-    rarity = get_rarity(block=block)
-    alignment = get_alignment(block=block)
-    size = block.select_one(".traitsize a").text
-    traits = get_traits(block=block)
-    perception = None
-    languages = None
-    skills = None
-    ability_modifiers = None
-    items = None
-    interaction_abilities = None
-    ac = None
-    saving_throws = None
-    hp = None
-    immunities = None
-    weaknesses = None
-    resistances = None
-    automatic_abilities = None
-    reactive_abilities = None
-    speed = None
-    melee_attacks = None
-    ranged_attacks = None
-    spells = None
-    innate_spells = None
-    focus_spells = None
-    rituals = None
-    offensive_abilities = None
-    proactive_abilities = None
+    def process_page(self):
+        logging.info('I am starting to process the Archive Page.')
+        h1list = split_by_tag(self.soup, 'h1')
+        logging.info(f'I found {len(h1list)} main headers.')
+        for section in h1list:
+            header = section.find('h1')
 
-    return data
+            if header:
 
+                if header.find('a', {'href': 'PFS.aspx'}):
+                    logging.info('This header is description.')
+                    self.process_header_flavor(section)
 
-def get_pfs(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
-    block, html, url, id, type = process_input(input_data, block, html, url, id, type)
-    pfs = block.select_one('a[href="PFS.aspx"]').select_one('img').get('alt')
-    return pfs
+                elif 'Creature ' in header.text:
+                    logging.info('This header is Stat Block.')
+                    self.process_header_stats(section)
 
+                elif header.find('a', href=lambda href: href.startswith('MonsterFamilies')):
+                    logging.info('This header is Monster Families.')
+                    self.process_header_family(section)
 
-def get_name_long(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
-    block, html, url, id, type = process_input(input_data, block, html, url, id, type)
-    name_long = block.select_one('a[href="PFS.aspx"]').select_one('img').get('alt')
-    return name_long
+    def process_header_flavor(self, section):
+        soup = section
+        h1 = soup.find('h1', {'class': 'title'})
+        recall_tag = soup.find('a', {'href': 'Rules.aspx?ID=563'})
+        h2 = h1.find_next_sibling('h2')
 
+        pfs = h1.select_one('img').get('alt')
+        self.save('pfs', pfs)
 
-def get_description(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
-    block, html, url, id, type = process_input(input_data, block, html, url, id, type)
+        title = h1.get_text()
+        self.save('title', title)
 
-    h1 = block.find('h1', {'class': 'title'})
-    h2 = h1.find_next_sibling('h2')
-    description = ''
-    nextsib = h1.next_sibling
-    while nextsib is not h2:
-        description += str(nextsib)
-        nextsib = nextsib.next_sibling
-    description = remove_tags(description)
-    description = description.split('Recall Knowledge')[0]
-    return description
+        description = ''
+        nextsib = h1.next_sibling
+        while nextsib is not None:
+            if str(recall_tag) in str(nextsib):
+                break
+            description += str(nextsib)
+            nextsib = nextsib.next_sibling
+        clean_description = re.sub(r'<br\s*/?>\s*', '\n', description)
+        self.save('description', clean_description)
 
+        recallsection = ''
+        while nextsib is not h2:
+            recallsection += str(nextsib)
+            if nextsib:
+                nextsib = nextsib.next_sibling
+            else:
+                break
+        recallsoup = BeautifulSoup(recallsection, 'html.parser')
+        recalldict = {}
+        for bold in recallsoup.find_all('b'):
+            key = bold.text.strip().rstrip(':').lstrip('Recall Knowledge - ')
+            value = bold.next_sibling.split('DC')[-1].strip()
+            recalldict[key] = value
+        self.save('recall', recalldict)
 
-def get_recall(input_data=None, block = None, html = None, url = None, id = None, type = 'creature') -> dict:
-    """
-    Retrieves the Recall Knowledge information from a monster's stat block and returns it as a dictionary.
+    def process_header_stats(self, section):
+        soup = section
+        header = section.find('h1')
 
-    Args:
-        input_data (object, optional): Any of the below, which will be assigned determined on type.
-        block (object, optional): The BeautifulSoup object representing the monster's stat block. Defaults to None.
-        html (str, optional): The HTML content of the monster's stat block. Defaults to None.
-        url (str, optional): The URL of the monster's stat block. Defaults to None.
-        id (int, optional): The ID of the monster in the Pathfinder 2e SRD. Defaults to None.
-        type (str, optional): The type of the entity to retrieve (e.g. "creature", "hazard"). Defaults to 'creature'.
+        name, level = header.text.split('Creature ')
+        self.save('name', name)
+        self.save('level', int(level))
 
-    Returns:
-        dict: A dictionary of Recall Knowledge information, where the bolded text is the key and the following unbolded
-        text is the value.
-    """
-
-    block, html, url, id, type = process_input(input_data, block, html, url, id, type)
-
-    h1 = block.find('h1', {'class': 'title'})
-    h2 = h1.find_next_sibling('h2')
-    description = ''
-    nextsib = h1.next_sibling
-    while nextsib is not h2:
-        description += str(nextsib)
-        nextsib = nextsib.next_sibling
-
-    recall = description.partition(r'<b><u><a href="Rules.aspx?ID=563">')
-    if len(recall) == 1:
-        return None
-    if len(recall) == 3:
-        recall = recall[1] + recall[2]
-
-    soup = BeautifulSoup(recall, 'html.parser')
-    recalldict = {}
-    for bold in soup.find_all('b'):
-        key = bold.text.strip().rstrip(':').lstrip('Recall Knowledge - ')
-        value = bold.next_sibling.split('DC')[-1].strip()
-        recalldict[key] = value
-
-    return recalldict
-
-
-def get_name(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
-    block, html, url, id, type = process_input(input_data, block, html, url, id, type)
-
-    monster_link = block.find(lambda tag: tag.name == 'a' and
-                                          tag.has_attr('href') and
-                                          tag['href'].startswith('Monsters.aspx?ID=') and
-                                          tag.parent.name == 'h1' and
-                                          tag.parent.get('class') == ['title'] and
-                                          not tag['href'].endswith('=True'))
-    monster_name = monster_link.text
-    return monster_name
-
-
-def get_level(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
-    block, html, url, id, type = process_input(input_data, block, html, url, id, type)
-    tag = block.find('span', {'style': 'margin-left:auto; margin-right:0'})
-    text = tag.text
-    levelstr = text.split()[-1]
-    levelint = int(levelstr)
-    return levelint
-
-
-def get_rarity(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
-    block, html, url, id, type = process_input(input_data, block, html, url, id, type)
-    rarity = 'Common'
-    if block.select_one("span.traituncommon"): rarity = 'Uncommon'
-    elif block.select_one("span.traitrare"): rarity = 'Rare'
-    return rarity
-
-
-def get_alignment(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
-    block, html, url, id, type = process_input(input_data, block, html, url, id, type)
-    alignment = block.select_one(".traitalignment a").text
-    return alignment
-
-
-def get_traits(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
-    block, html, url, id, type = process_input(input_data, block, html, url, id, type)
-    traitslist = [t.text for t in block.select(".trait a")]
-    return traitslist
-
-
-def split_block(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
-    block, html, url, id, type = process_input(input_data, block, html, url, id, type)
-    # find the first time a trait appears
-    tag_trait = block.find(lambda t:
-                           t.name == 'span' and
-                           t.get('class', [])[0].startswith('trait'))
-    # find the next line break after the trait is given
-    next_line_break = tag_trait.find_next('br')
-    content_after_line_break = []
-    for element in next_line_break.next_siblings:
-        if 'title' in element.get('class', []):  # stop if you get to a title
-            break
-        if isinstance(element, NavigableString):
-            content_after_line_break.append(element)
+        if soup.select_one("span.traituncommon"):
+            rarity = 'Uncommon'
+        elif soup.select_one("span.traitrare"):
+            rarity = 'Rare'
         else:
-            content_after_line_break.append(element.prettify())
-    new_html = ''.join(content_after_line_break)
-    html_by_sections = new_html.split(r'<hr>')
-    for html in html_by_sections:
-        #TODO convert each html in list to soup
+            rarity = 'Common'
+        self.save('rarity', rarity)
+
+        alignment = soup.select_one(".traitalignment a").text
+        self.save('alignment', alignment)
+
+        size = soup.select_one(".traitsize a").text
+        self.save('size', size)
+
+        # other traits
+        traitslist = [t.text for t in soup.select(".trait a")]
+        self.save('traits',traitslist)
+
+        # List of lines
+        last_trait = None
+        for span in soup.find_all('span', class_='trait'):
+            last_trait = span
+        # TODO pick up here
+
+    def process_header_family(self, section):
         pass
 
-    return foo
+    def save(self, key, value):
+        value_length_limit = 30
+        if len(str(value)) < value_length_limit:
+            logging.info(f'I am saving to {key}: {value}.')
+        else:
+            logging.info(f'I am saving to {key}: {len(str(value))} characters.')
+        self.data[key] = value
 
 
-def get_foo(input_data=None, block=None, html=None, url=None, id=None, type='creature'):
-    block, html, url, id, type = process_input(input_data, block, html, url, id, type)
-    foo = None
-    return foo
+def remove_tags(html):
+    return re.sub('<.*?>', '', html)
 
+
+def split_by_tag(soup: BeautifulSoup, tag: str = 'h1') -> List[BeautifulSoup]:
+    """
+    Splits a BeautifulSoup object into sections just before each occurrence of the specified tag.
+
+    Args:
+        soup (BeautifulSoup): A BeautifulSoup object to split.
+        tag (str): The tag name to split the soup by (default 'h1').
+
+    Returns:
+        List[BeautifulSoup]: A list of BeautifulSoup objects representing the sections split just before the specified tag.
+    """
+    sections = []
+    current_section = []
+
+    for element in soup:
+        if isinstance(element, Tag) and element.name == tag:
+            if current_section:
+                sections.append(BeautifulSoup(''.join(map(str, current_section)), 'html.parser'))
+                current_section = []
+        if isinstance(element, Tag) or isinstance(element, NavigableString):
+            current_section.append(element)
+
+    if current_section:
+        sections.append(BeautifulSoup(''.join(map(str, current_section)), 'html.parser'))
+
+    return sections
+
+
+def split_by_attr(soup: BeautifulSoup, attrs: Dict[str, str]) -> List[BeautifulSoup]:
+    """
+        Splits a BeautifulSoup object into sections just before each specified attribute(s).
+
+        Args:
+            soup (BeautifulSoup): A BeautifulSoup object to split.
+            attrs (Dict[str, str]): A dictionary of attribute(s) to split the soup by.
+
+        Returns:
+            List[BeautifulSoup]: A list of BeautifulSoup objects representing the sections split just before the tag(s) with the specified attribute(s).
+        """
+    def dfs(soup: PageElement, attrs: Dict[str, str]):
+        """
+        Performs a depth-first search to split the soup object into sections based on the specified attribute(s).
+
+        Args:
+            soup (PageElement): The current BeautifulSoup PageElement to traverse.
+            attrs (Dict[str, str]): A dictionary of attribute(s) to split the soup by.
+        """
+        nonlocal current_section, sections
+        for element in soup.children:
+            if (isinstance(element, Tag) and
+                    all(
+                        element.get(attr) == value if attr != 'class'
+                        else element.get('class') == value.split()
+                        for attr, value in attrs.items()
+                    )):
+                if current_section:
+                    sections.append(BeautifulSoup(''.join(map(str, current_section)), 'html.parser'))
+                    current_section = []
+            if isinstance(element, Tag) or isinstance(element, NavigableString):
+                current_section.append(element)
+            if isinstance(element, Tag):
+                dfs(element, attrs)
+
+    sections = []
+    current_section = []
+    dfs(soup, attrs)
+
+    if current_section:
+        sections.append(BeautifulSoup(''.join(map(str, current_section)), 'html.parser'))
+
+    return sections
+
+
+def soup_from_strings(elements: List[str]) -> BeautifulSoup:  # deprecated
+    """
+    Create a BeautifulSoup object from a list of strings.
+
+    Args:
+        elements (List[str]): A list of HTML strings.
+
+    Returns:
+        BeautifulSoup: A BeautifulSoup object representing the parsed HTML.
+    """
+    html = ''.join(map(str, elements))
+    soup = BeautifulSoup(html, 'html.parser')
+    return soup
